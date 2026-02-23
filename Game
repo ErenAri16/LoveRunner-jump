@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>🌻 Prens ve Prensesin Hikayesi</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0c1012;
+    --cream:#fff6e6;
+    --sun:#f7c948;
+    --rose:#ff6ea8;
+  }
+  html,body{margin:0;height:100%;background:#000;touch-action:manipulation;}
+  body{display:flex;align-items:center;justify-content:center;font-family:'Press Start 2P', monospace;color:#fff;}
+  .frame{position:relative;width:min(920px,96vw);aspect-ratio:16/9;background:#111;image-rendering:pixelated;}
+  canvas{width:100%;height:100%;display:block;background:#0d0f10;border:4px solid #fff;box-shadow:0 0 0 4px #000, inset 6px 6px 0 rgba(255,255,255,.15), inset -6px -6px 0 rgba(0,0,0,.8);}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.85);padding:18px;z-index:5}
+  .panel{width:min(760px,90%);border:4px solid #fff;box-shadow:0 0 0 4px #000,inset 6px 6px 0 rgba(255,255,255,.12), inset -6px -6px 0 rgba(0,0,0,.7);background:linear-gradient(#121416,#0c0e10);padding:22px 18px;text-align:center}
+  h1{margin:0 0 14px 0;font-size:18px;letter-spacing:.5px}
+  .btns{display:flex;gap:14px;justify-content:center;margin-top:12px;flex-wrap:wrap}
+  button{font-family:'Press Start 2P', monospace;font-size:13px;border:4px solid #fff;box-shadow:0 0 0 4px #000,inset -6px -6px 0 #5a3b06;cursor:pointer;padding:12px 16px;background:var(--sun);color:#111}
+  button.secondary{background:#9ff2b1;box-shadow:0 0 0 4px #000,inset -6px -6px 0 #2c6e3f}
+  .hint{opacity:.9;color:#ddd;font-size:12px;margin-top:10px}
+  #ending{display:none}
+  #ending .panel{background:radial-gradient(120% 120% at 50% 60%, rgba(36,52,40,.95), rgba(15,18,17,.96))}
+  #ending .poem p{margin:0 0 12px 0;font-size:14px;line-height:1.9;color:var(--cream)}
+  #ending em{color:var(--rose);font-style:normal}
+</style>
+</head>
+<body>
+  <div class="frame">
+    <canvas id="game" width="800" height="450"></canvas>
+
+    <!-- Alt sabit çağrı butonu (ekranı kapatmadan) -->
+    <div id="cta" style="position:absolute; left:50%; transform:translateX(-50%); bottom:12px; display:none; z-index:6">
+      <button id="btnCTA" class="btn-pixel">Prens'in Mektubu</button>
+    </div>
+
+    <div id="start" class="overlay">
+      <div class="panel">
+        <h1>🌻   Aşk   🌻</h1>
+        <div style="color:#ddd;font-size:12px;margin-bottom:10px">Prens engelleri aş, prensese yaklaş; orman aydınlansın.</div>
+        <div class="btns">
+          <button id="btnStart">Başla</button>
+          <button id="btnHow" class="secondary">Nasıl Oynanır</button>
+        </div>
+        <div class="hint">Zıpla: Space / ↑ veya ekrana dokun</div>
+      </div>
+    </div>
+
+    <div id="how" class="overlay" style="display:none">
+      <div class="panel">
+        <h1>🎮 Kontroller</h1>
+        <div style="color:#ddd;font-size:12px;line-height:1.9">
+          - Engelleri aşmak için zıpla.<br>
+          - Uzaklaştıkça orman güzelleşir, ışık artar.<br>
+          - Sona vardığında sürpriz metin görünür.
+        </div>
+        <div class="btns"><button id="btnPlay2">Hadi Başlayalım</button></div>
+      </div>
+    </div>
+
+    <div id="ending" class="overlay" style="display:none">
+      <div class="panel">
+        <h1>🌻  Aşk   🌻</h1>
+        <div id="poem" class="poem" aria-live="polite"></div>
+        <div class="btns">
+          <button id="btnReplay">Tekrar Oyna</button>
+          <button id="btnMenu" class="secondary">Ana Menü</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  // World (biraz daha uzun: ~10 saniye için sabit hız)
+  const world = {
+    w: canvas.width, h: canvas.height,
+    groundY: 360,
+    gravity: 0.6,
+    jumpV: -11.8,
+    speed: 2.67,
+    maxSpeed: 2.67,
+    t: 0,
+    progress: 0,
+    win: 1600, // mesafe sabit (engel sayısı aynı)
+    playing: false,
+    gameOver: false,
+  };
+
+  const player = {
+    x: 110, y: world.groundY - 48,
+    w: 36, h: 48,
+    vy: 0,
+    onGround: true,
+    blink: 0,
+  };
+
+  const obstacles = [];
+  function rand(a,b){ return Math.random()*(b-a)+a; }
+
+  // Final sahnesi durumları
+  const finale = {
+    phase: 'none', // none | approach | kneel
+    targetX: null,
+    kneelT: 0,
+    hearts: [],
+    heartTimer: 0
+  };
+
+  // Arka plan için ateşböcekleri (sayısı artırıldı)
+  const fireflies = Array.from({length: 60}, (_,i)=>({
+    x: Math.random()*800,
+    y: 140 + Math.random()*220,
+    r: 1.5 + Math.random()*1.8,
+    s: Math.random()*Math.PI*2
+  }));
+
+  // Vahşi yaşam: yarasa, yılan (başta); kelebek (sona doğru)
+  const bats = [];
+  const snakes = [];
+  const butterflies = [];
+
+  // Ayçiçeği: Eğer aynı klasörde 'sunflower.png' varsa onu kullan; yoksa vektörel çiz
+  const sunflowerSprite = new Image();
+  sunflowerSprite.src = 'sunflower.png?v=' + Date.now(); // cache-bust
+  let sunflowerSpriteReady = false;
+  sunflowerSprite.onload = () => { sunflowerSpriteReady = true; };
+
+  function drawSunflowerAt(cx, cy, scale = 1, angleRad = -0.2){
+    if(sunflowerSpriteReady){
+      const size = 32 * scale;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angleRad);
+      ctx.imageSmoothingEnabled = false; // piksel keskinliği
+      ctx.drawImage(sunflowerSprite, -size*0.6, -size*0.7, size*1.2, size*1.2);
+      ctx.restore();
+      return;
+    }
+    // Vektörel fallback (belirgin)
+    const petalCount = 16;
+    const petalOuter = 14 * scale;
+    const petalInner = 6 * scale;
+    const centerR = 7 * scale;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angleRad);
+
+    // Sap ve yapraklar
+    ctx.fillStyle = '#2e9b49';
+    ctx.fillRect(-1.5, 0, 3, 24*scale);
+    ctx.beginPath(); ctx.ellipse(-6*scale, 10*scale, 7*scale, 3.5*scale, -0.7, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(7*scale, 16*scale, 7*scale, 3.5*scale, 0.7, 0, Math.PI*2); ctx.fill();
+
+    // Taç yapraklar (iki ton sarı/turuncu, kalın kontur)
+    for(let i=0;i<petalCount;i++){
+      const a = i*(Math.PI*2/petalCount);
+      const px = Math.cos(a)*(petalOuter-2*scale);
+      const py = Math.sin(a)*(petalOuter-2*scale);
+      ctx.save();
+      ctx.rotate(a);
+      ctx.fillStyle = i%2===0 ? '#f6c144' : '#f4a835';
+      ctx.beginPath(); ctx.ellipse(petalInner, 0, 5*scale, 8*scale, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+    // Dış kontur halkası
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.arc(0, 0, petalOuter, 0, Math.PI*2); ctx.stroke();
+
+    // Merkez (çekirdek) ve hafif doku
+    const grad = ctx.createRadialGradient(0,0, centerR*0.3, 0,0, centerR);
+    grad.addColorStop(0, '#6b3f19');
+    grad.addColorStop(1, '#4a2a10');
+    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(0, 0, centerR, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    for(let i=0;i<6;i++){ ctx.beginPath(); ctx.arc((Math.random()-0.5)*centerR*0.8, (Math.random()-0.5)*centerR*0.8, 0.8*scale, 0, Math.PI*2); ctx.fill(); }
+
+    ctx.restore();
+  }
+
+  function spawnObstacle() {
+    const type = Math.random() < 0.5 ? 'log' : 'bush';
+    const size = type === 'log' ? {w: 36, h: 24} : {w: 28, h: 34};
+    obstacles.push({
+      x: world.w + rand(0,120),
+      y: world.groundY - size.h,
+      w: size.w, h: size.h, type
+    });
+  }
+
+  let spawnTimer = 0;
+
+  // Çizimler
+  function drawBackground() {
+    const t = Math.min(1, world.progress / world.win);
+
+    // Gökyüzü
+    const skyTop = `rgb(${12+(108*t)|0}, ${18+(182*t)|0}, ${22+(148*t)|0})`;
+    const g = ctx.createLinearGradient(0,0,0,world.h);
+    g.addColorStop(0, skyTop);
+    g.addColorStop(1, `rgb(${10+(30*t)|0}, ${14+(56*t)|0}, ${16+(44*t)|0})`);
+    ctx.fillStyle = g; ctx.fillRect(0,0,world.w,world.h);
+
+    // Parallax ağaç katmanları
+    drawTrees(0.2, 240, `rgba(10,35,30,${0.7-0.3*t})`, 140);
+    drawTrees(0.5, 300, `rgba(12,50,40,${0.85-0.35*t})`, 220);
+    drawTrees(0.9, 340, `rgba(16,70,50,${0.9-0.4*t})`, 300);
+
+    // Daha belirgin aydınlanma: karanlık vignette + sıcak ışık
+    const darkness = 0.55 * (1 - t);
+    const vign = ctx.createRadialGradient(world.w*0.5, world.h*0.6, world.w*0.1, world.w*0.5, world.h*0.6, world.w*0.8);
+    vign.addColorStop(0, `rgba(0,0,0,${darkness*0.2})`);
+    vign.addColorStop(1, `rgba(0,0,0,${darkness})`);
+    ctx.fillStyle = vign; ctx.fillRect(0,0,world.w,world.h);
+
+    const light = ctx.createRadialGradient(world.w*0.55, world.h*0.45, 20, world.w*0.55, world.h*0.45, world.w*0.9);
+    light.addColorStop(0, `rgba(247,201,72,${0.05 + 0.35*t})`);
+    light.addColorStop(1, `rgba(247,201,72,0)`);
+    ctx.fillStyle = light; ctx.fillRect(0,0,world.w,world.h);
+
+    // Zemin
+    ctx.fillStyle = `rgb(${22+(14*t)|0}, ${60+(80*t)|0}, ${24+(46*t)|0})`;
+    ctx.fillRect(0, world.groundY, world.w, world.h-world.groundY);
+    ctx.fillStyle = `#3b1e10`;
+    ctx.fillRect(0, world.groundY+34, world.w, 24);
+
+    // Ateşböcekleri (sona yaklaştıkça belirgin)
+    if(t>0.5){
+      const alpha = (t-0.5)*1.2;
+      fireflies.forEach((f,idx)=>{
+        const flicker = (Math.sin(world.t*3 + f.s + idx*0.7)+1)/2; // 0..1
+        ctx.globalAlpha = Math.min(0.85, alpha * (0.3 + 0.7*flicker));
+        ctx.fillStyle = '#f7c948';
+        ctx.beginPath(); ctx.arc(f.x, f.y + Math.sin(world.t + idx)*2, f.r, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+    }
+  }
+
+  function drawTrees(speedMul, baseY, color, width){
+    const offset = (world.t*world.speed*speedMul) % width;
+    ctx.fillStyle = color;
+    for(let x = -offset; x < world.w; x += width){
+      const cx = x + 40;
+      ctx.fillRect(cx, baseY-80, 16, 80);
+      blob(cx-30, baseY-110, 80, 60);
+      blob(cx+20, baseY-120, 70, 56);
+    }
+  }
+  function blob(x,y,w,h){
+    ctx.beginPath(); ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2); ctx.fill();
+  }
+
+  function drawPlayer() {
+    const px = Math.round(player.x), py = Math.round(player.y);
+    if (finale.phase === 'kneel') {
+      // Diz çökme ve çiçeği uzatma pozu
+      ctx.fillStyle = '#5a3b06'; ctx.fillRect(px+10, py+player.h-6, 18, 6); // tek diz
+      ctx.fillStyle = '#3e6fb0'; ctx.fillRect(px+16, py+26, 14, 12); // bacak
+      ctx.fillStyle = '#2a5fa2'; ctx.fillRect(px+8, py+12, 24, 18); // gövde
+      ctx.fillStyle = '#d79a3b'; ctx.fillRect(px+8, py+22, 24, 4);
+      ctx.fillStyle = '#f4c9a1'; ctx.fillRect(px+14, py-2, 14, 10); // baş
+      ctx.fillStyle = '#f7c948'; ctx.fillRect(px+12, py-6, 18, 6); // taç
+      ctx.fillStyle = '#b31b2c'; ctx.fillRect(px-6, py+10, 10, 24); // pelerin
+      // ileri uzatılan kol + ayçiçeği (sprite varsa onu kullan)
+      drawSunflowerAt(px+28, py+12, 1.05, -0.25);
+    } else {
+      // Koşma pozu
+      ctx.fillStyle = '#5a3b06'; ctx.fillRect(px+4, py+player.h-8, 12, 8); ctx.fillRect(px+20, py+player.h-8, 12, 8);
+      ctx.fillStyle = '#3e6fb0'; ctx.fillRect(px+6, py+28, 10, 16); ctx.fillRect(px+22, py+28, 10, 16);
+      ctx.fillStyle = '#2a5fa2'; ctx.fillRect(px+6, py+10, 26, 20);
+      ctx.fillStyle = '#d79a3b'; ctx.fillRect(px+6, py+22, 26, 4);
+      ctx.fillStyle = '#f4c9a1'; ctx.fillRect(px+12, py, 16, 12);
+      ctx.fillStyle = '#f7c948'; ctx.fillRect(px+10, py-4, 20, 6);
+      ctx.fillStyle = '#b31b2c'; ctx.fillRect(px-8, py+8, 12, 28);
+      // koşarken ayçiçeği daha belirgin
+      // koşarken ayçiçeği: sprite öncelikli
+      drawSunflowerAt(px+30, py+12, 1.0, -0.18);
+    }
+    if (player.blink>0){ ctx.fillStyle='rgba(255,255,255,.6)'; ctx.fillRect(px-10, py-10, player.w+24, player.h+24); player.blink--; }
+  }
+
+  function drawPrincess() {
+    const appearT = Math.min(1, Math.max(0, (world.progress - (world.win-400))/400));
+    if (appearT<=0) return;
+    const x = world.w - 160 + (1-appearT)*40;
+    const y = world.groundY - 52;
+    ctx.fillStyle = '#ff66a1'; ctx.fillRect(x+6,y+18,28,28);
+    ctx.fillStyle = '#f4c9a1'; ctx.fillRect(x+14,y,12,10);
+    ctx.fillStyle = '#5b2d1f'; ctx.fillRect(x+8,y,6,28); ctx.fillRect(x+28,y,6,28);
+    ctx.fillStyle = '#f7c948'; ctx.fillRect(x+12,y-6,16,6);
+    ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(x+6, y+46, 28, 6);
+  }
+
+  function drawObstacles() {
+    obstacles.forEach((o, idx)=>{
+      // hafif salınım animasyonu
+      const bob = Math.sin((world.t*3) + idx) * 2;
+      if(o.type==='log'){
+        ctx.fillStyle = '#6e3c1f'; ctx.fillRect(o.x, o.y + bob, o.w, o.h);
+        ctx.fillStyle = '#4d2a14'; ctx.fillRect(o.x, o.y+o.h-6 + bob, o.w, 6);
+        // metal bant ve dış hat
+        ctx.fillStyle = '#b89a7d'; ctx.fillRect(o.x+8, o.y+6 + bob, 6, o.h-12);
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.strokeRect(o.x+0.5, o.y+0.5 + bob, o.w-1, o.h-1);
+      }else{
+        // dikenli çalı: daha doygun renk ve kontur
+        ctx.fillStyle = '#1f6b38'; blob(o.x+o.w/2-6, o.y+8 + bob, o.w+10, o.h); ctx.fill();
+        ctx.fillStyle = '#e03b3b'; ctx.beginPath(); ctx.arc(o.x + o.w/2, o.y + 6 + bob, 3, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = '#0a2415'; ctx.lineWidth = 3; ctx.strokeRect(o.x+0.5, o.y+0.5 + bob, o.w-1, o.h-1);
+        ctx.fillStyle = '#144528'; ctx.fillRect(o.x, o.y+o.h-6 + bob, o.w, 6);
+      }
+    });
+
+    // Kozmetik yaratıklar
+    drawBats();
+    drawSnakes();
+    drawButterflies();
+  }
+
+  function drawBats(){
+    const t = world.progress / world.win;
+    if(t < 0.45 && Math.random() < 0.02){
+      bats.push({ x: world.w + 20, y: 120 + Math.random()*120, vx: -(2.2+Math.random()*1.2), flap: 0});
+    }
+    for(let i=bats.length-1;i>=0;i--){
+      const b = bats[i];
+      b.x += b.vx; b.flap += 0.3;
+      // kanatlar
+      ctx.fillStyle = '#2b2b2b';
+      const w = 18, h = 6 + Math.sin(b.flap)*4;
+      ctx.fillRect(b.x-2, b.y-2, 4, 4);
+      ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x-w, b.y+h); ctx.lineTo(b.x-6, b.y); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x+w, b.y+h); ctx.lineTo(b.x+6, b.y); ctx.fill();
+      if(b.x < -30) bats.splice(i,1);
+    }
+  }
+
+  function drawSnakes(){
+    const t = world.progress / world.win;
+    if(t < 0.4 && Math.random() < 0.01){
+      snakes.push({ x: world.w + 10, y: world.groundY-10, vx: -(1.2+Math.random()*0.8), wiggle: 0});
+    }
+    for(let i=snakes.length-1;i>=0;i--){
+      const s = snakes[i]; s.x += s.vx; s.wiggle += 0.25;
+      const seg = 6;
+      for(let k=0;k<6;k++){
+        ctx.fillStyle = k%2? '#2e7d32':'#1b5e20';
+        const ox = Math.sin(s.wiggle + k*0.6) * 3;
+        ctx.fillRect(s.x - k*seg + ox, s.y-4, seg, 6);
+      }
+      // kafa
+      ctx.fillStyle = '#144528'; ctx.fillRect(s.x+2, s.y-5, 6, 8);
+      ctx.fillStyle = '#e03b3b'; ctx.fillRect(s.x+8, s.y-1, 4, 2);
+      if(s.x < -40) snakes.splice(i,1);
+    }
+  }
+
+  function drawButterflies(){
+    const t = world.progress / world.win;
+    if(t > 0.65 && Math.random() < 0.02){
+      butterflies.push({ x: -10, y: 140 + Math.random()*120, vx: 1.2+Math.random()*0.8, flap: 0, hue: 300+Math.random()*60});
+    }
+    for(let i=butterflies.length-1;i>=0;i--){
+      const b = butterflies[i];
+      b.x += b.vx; b.flap += 0.35; b.y += Math.sin(b.flap)*0.6;
+      const w = 10, h = 7 + Math.sin(b.flap)*3;
+      ctx.fillStyle = `hsl(${b.hue},80%,70%)`;
+      ctx.beginPath(); ctx.ellipse(b.x-3, b.y, w, h, 0.5, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(b.x+3, b.y, w, h, -0.5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#333'; ctx.fillRect(b.x-1, b.y-3, 2, 6);
+      if(b.x > world.w+30) butterflies.splice(i,1);
+    }
+  }
+
+  function aabb(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
+
+  // Kontroller
+  let jumpQueued = false;
+  function jump(){
+    if(!world.playing) return;
+    if(player.onGround){
+      player.vy = world.jumpV;
+      player.onGround = false;
+    }
+  }
+  window.addEventListener('keydown', e => { if(e.code==='Space'||e.code==='ArrowUp') { e.preventDefault(); jumpQueued=true; }});
+  window.addEventListener('touchstart', () => { jumpQueued=true; }, {passive:true});
+
+  // Oyun döngüsü
+  function update(){
+    // Final sahnesi de güncellenir
+    if(!world.playing && finale.phase === 'none') return;
+
+    world.t += 1/60;
+    // Hız sabit: 8 sn hedef
+    if(world.playing){
+      world.speed = world.maxSpeed;
+      world.progress += world.speed;
+    } else {
+      world.speed = 0; // finalde dünya akışı durur
+    }
+
+    // engel üretimi: hedefe yaklaştıktan sonra yeni engel ekleme
+    spawnTimer -= world.speed;
+    if(world.playing && world.progress < world.win - 20){
+      if(spawnTimer<=0){
+        spawnObstacle();
+        spawnTimer = 220 + rand(-40, 40);
+        if(world.progress > world.win-360) spawnTimer = 280;
+      }
+    }
+
+    obstacles.forEach(o=>o.x -= world.speed);
+    while(obstacles.length && obstacles[0].x + obstacles[0].w < -40) obstacles.shift();
+
+    if(jumpQueued && world.playing){ jump(); jumpQueued=false; } else { jumpQueued=false; }
+    player.vy += world.gravity;
+    player.y += player.vy;
+    if(player.y + player.h >= world.groundY){
+      player.y = world.groundY - player.h;
+      player.vy = 0; player.onGround = true;
+    }
+
+    const box = {x:player.x+4,y:player.y,w:player.w-8,h:player.h-4};
+    for(const o of obstacles){
+      if(aabb(box, o)){
+        player.blink = 6;
+        world.progress = Math.max(0, world.progress - 40);
+        o.x -= 18;
+      }
+    }
+
+    if(world.playing && world.progress >= world.win){
+      // Finale geçmeden önce sahnede engel kalmamasını bekle
+      if(obstacles.length === 0 || obstacles.every(o => o.x + o.w < player.x + 40)){
+        world.playing = false;
+        startFinale();
+      }
+    }
+
+    // Final sahnesi akışı
+    if(finale.phase === 'approach'){
+      const speed = 2.2;
+      if(player.x < finale.targetX){
+        player.x += speed;
+      } else {
+        finale.phase = 'kneel';
+        finale.kneelT = 0;
+        // kalp parçacıkları
+        finale.hearts = [];
+        for(let i=0;i<12;i++){
+          finale.hearts.push({
+            x: player.x + 24 + Math.random()*24,
+            y: player.y - 8 + Math.random()*12,
+            vy: - (0.6 + Math.random()*0.8),
+            vx: (Math.random()-0.5)*0.6,
+            a: 1
+          });
+        }
+        // Alt butonu göster; şiiri henüz yazdırma
+        document.getElementById('cta').style.display = 'block';
+        poem.innerHTML = '';
+      }
+    } else if(finale.phase === 'kneel'){
+      // yumuşak diz çökme animasyonu
+      finale.kneelT += 1/60;
+      player.y = world.groundY - player.h - Math.min(10, finale.kneelT*18);
+      // kalpler sürekli üretilsin
+      finale.heartTimer -= 1/60;
+      if(finale.heartTimer<=0){
+        for(let i=0;i<4;i++){
+          finale.hearts.push({
+            x: player.x + 22 + Math.random()*30,
+            y: player.y - 4 + Math.random()*14,
+            vy: - (0.5 + Math.random()*0.7),
+            vx: (Math.random()-0.5)*0.5,
+            a: 1
+          });
+        }
+        finale.heartTimer = 0.25; // her çeyrek saniye yeni kalpler
+      }
+      finale.hearts.forEach(h=>{ h.x += h.vx; h.y += h.vy; h.a -= 0.006; });
+      finale.hearts = finale.hearts.filter(h=> h.a>0);
+    }
+  }
+
+  function render(){
+    drawBackground();
+    drawPrincess();
+    drawObstacles();
+    drawPlayer();
+
+    // Kalp baloncukları
+    if(finale.phase === 'kneel' && finale.hearts.length){
+      finale.hearts.forEach(h=>{
+        ctx.globalAlpha = Math.max(0, Math.min(1, h.a));
+        ctx.fillStyle = '#ff6ea8';
+        // kalp şekli (iki daire + üçgen)
+        ctx.beginPath();
+        const size = 7;
+        ctx.arc(h.x, h.y, size*0.45, 0, Math.PI*2);
+        ctx.arc(h.x+size*0.6, h.y, size*0.45, 0, Math.PI*2);
+        ctx.moveTo(h.x - size*0.3, h.y + size*0.2);
+        ctx.lineTo(h.x + size*0.6, h.y + size*1.3);
+        ctx.lineTo(h.x + size*1.5, h.y + size*0.2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+    }
+
+    const t = Math.min(1, world.progress/world.win);
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(20,20, world.w-40, 16);
+    ctx.fillStyle = '#9ff2b1'; ctx.fillRect(20,20, (world.w-40)*t, 16);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(20.5,20.5, world.w-41, 15);
+
+    if(world.t < 2 && world.playing){
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = '12px "Press Start 2P"';
+      ctx.fillText('Zıpla: Space / ↑ / Dokun', 22, 56);
+    }
+  }
+
+  function loop(){ update(); render(); requestAnimationFrame(loop); }
+
+  // UI
+  const start = document.getElementById('start');
+  document.getElementById('btnStart').onclick = () => { start.style.display='none'; begin(); };
+  document.getElementById('btnHow').onclick = () => { start.style.display='none'; document.getElementById('how').style.display='flex'; };
+  document.getElementById('btnPlay2').onclick = () => { document.getElementById('how').style.display='none'; begin(); };
+
+  // (Müzik devre dışı bırakıldı)
+
+  function begin(){
+    obstacles.length = 0;
+    world.progress = 0; world.speed = world.maxSpeed; world.playing = true; world.gameOver=false; world.t=0;
+    player.x=110; player.y=world.groundY-48; player.vy=0; player.onGround=true;
+    spawnTimer = 0;
+    finale.phase = 'none';
+    // (Müzik yok)
+  }
+
+  function startFinale(){
+    finale.phase = 'approach';
+    // prensesin yanında duracağı nokta
+    finale.targetX = world.w - 200;
+  }
+
+  // Final metni
+  const ENDING_LINES = [
+    'Cahit Zarifoğlu diyor ki:',
+    '<em>"Özlemek ne derin bir duygu öyle,<br>Özlemek ne uzun bir mesafe öyle"</em>',
+    'Cemal Süreya ekliyor:',
+    '<em>"Uzaktan sevmediyseniz,<br>hiçbirini \'Sevdim\' demeyin"</em>',
+    'Oğuz Atay:',
+    '<em>"Aklımdan çıkmıyor, aklım çıkıyor,<br>o çıkmıyor"</em>',
+    'Özlemim dinmiyor, dinemeyecek de,<br>yanımda olsan da özleyeceğim seni her zaman...',
+    'Uzaktan seviyorum seni; uzağız, mesafeler var aramızda, bazen zor olacak, çok özleyeceğiz,<br>kimi zaman çaresiz kalacağız ama her şeyin üstesinden beraber geleceğiz...',
+    'Her şeyi beraber başaracağız...'
+  ];
+
+  const ending = document.getElementById('ending');
+  const poem = document.getElementById('poem');
+  const cta = document.getElementById('cta');
+  const btnCTA = document.getElementById('btnCTA');
+  function typeLine(el, html, delay=16){
+    return new Promise(res=>{
+      const tmp = document.createElement('span');
+      el.appendChild(tmp);
+      const plain = html.replace(/<br>/g,'\n').replace(/<[^>]+>/g,'');
+      let i=0;
+      (function step(){
+        if(i>=plain.length){ tmp.innerHTML = html; return void res(); }
+        tmp.textContent = plain.slice(0, ++i);
+        setTimeout(step, delay);
+      })();
+    });
+  }
+  async function showEnding(){
+    ending.style.display='flex';
+    poem.innerHTML='';
+    for(const line of ENDING_LINES){
+      const p = document.createElement('p'); poem.appendChild(p);
+      await typeLine(p, line);
+      await new Promise(r=>setTimeout(r,220));
+    }
+  }
+  btnCTA.onclick = () => {
+    cta.style.display = 'none';
+    ending.style.display = 'flex';
+    showEnding();
+  };
+  document.getElementById('btnReplay').onclick = () => { ending.style.display='none'; begin(); };
+  document.getElementById('btnMenu').onclick = () => { ending.style.display='none'; start.style.display='flex'; };
+
+  loop();
+})();
+</script>
+</body>
+</html>
